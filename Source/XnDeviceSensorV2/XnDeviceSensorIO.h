@@ -98,6 +98,8 @@ private:
 	XN_SENSOR_HANDLE* m_pSensorHandle;
 	XnBool m_bMiscSupported;
 	XnSensorUsbInterface m_interface;
+	XnUInt16 m_nVendorID;
+	XnUInt16 m_nProductID;
 };
 
 #endif //__XN_DEVICE_SENSOR_I_O_H__
