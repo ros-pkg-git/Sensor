@@ -480,17 +480,29 @@ void XnRegistration::Apply1000(XnDepthPixel* pInput, XnDepthPixel* pOutput)
 			nNewX = (XnInt32)(XnDouble(*pRegTable)/XN_REG_X_SCALE + XnInt32(pDepth2ShiftTable[nValue]/XN_REG_PARAB_COEFF - nConstShift) * dShiftFactor);
 			nNewY = *(pRegTable+1);
 
-			if ((XnUInt32)nNewX-1 < (XnUInt32)nDepthXRes-1)
+			if ( nNewX < nDepthXRes && nNewY < nDepthYRes )
 			{
 				nArrPos = nNewY * nDepthXRes + nNewX;
 				nOutValue = pOutput[nArrPos];
 
 				if (nOutValue == 0 || nOutValue > nValue)
 				{
+					if ( nNewX > 0 && nNewY > 0 )
+					{
+						pOutput[nArrPos-nDepthXRes] = nValue;
+						pOutput[nArrPos-nDepthXRes-1] = nValue;
+						pOutput[nArrPos-1] = nValue;
+					}
+					else if( nNewY > 0 )
+					{
+						pOutput[nArrPos-nDepthXRes] = nValue;
+					}
+					else if( nNewX > 0 )
+					{
+						pOutput[nArrPos-1] = nValue;
+					}
+					
 					pOutput[nArrPos] = nValue;
-					pOutput[nArrPos-1] = nValue;
-					pOutput[nArrPos-nDepthXRes] = nValue;
-					pOutput[nArrPos-nDepthXRes-1] = nValue;
 				}
 			}
 		}
@@ -533,7 +545,7 @@ void XnRegistration::Apply1080(XnDepthPixel* pInput, XnDepthPixel* pOutput)
 				nNewX = (XnUInt32)(*pRegTable + pRGBRegDepthToShiftTable[nValue]) / RGB_REG_X_VAL_SCALE;
 				nNewY = *(pRegTable+1);
 
-				if (nNewX < nDepthXRes)
+				if (nNewX < nDepthXRes && nNewY < nDepthYRes )
 				{
 					nArrPos = bMirror ? (nNewY+1)*nDepthXRes - nNewX - 2 : (nNewY*nDepthXRes) + nNewX;
 					nArrPos -= nConstOffset;
@@ -542,12 +554,21 @@ void XnRegistration::Apply1080(XnDepthPixel* pInput, XnDepthPixel* pOutput)
 
 					if ((nOutValue == XN_DEVICE_SENSOR_NO_DEPTH_VALUE) || (nOutValue > nValue))
 					{
-						if (nArrPos > nDepthXRes+1)
+						if ( nNewX > 0 && nNewY > 0 )
 						{
+							pOutput[nArrPos-nDepthXRes] = nValue;
 							pOutput[nArrPos-nDepthXRes-1] = nValue;
+							pOutput[nArrPos-1] = nValue;
+						}
+						else if( nNewY > 0 )
+						{
 							pOutput[nArrPos-nDepthXRes] = nValue;
 						}
-						pOutput[nArrPos-1] = nValue;
+						else if( nNewX > 0 )
+						{
+							pOutput[nArrPos-1] = nValue;
+						}
+						
 						pOutput[nArrPos] = nValue;
 					}
 				}
