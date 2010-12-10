@@ -68,8 +68,27 @@ static inline void WriteRGB(XnUInt8 *pBuffer, XnUInt8 nRed, XnUInt8 nGreen, XnUI
 	pBuffer[BAYER_BLUE] = Gamma[nBlue];
 }
 
-void Bayer2RGB888(const XnUInt8* pBayerImage, XnUInt8* pRGBImage, XnUInt32 nXRes, XnUInt32 nYRes, XnUInt32 nDownSampleStep, XnUInt32 nBadPixels)
+//
+// color interpolation
+// fast interpolation, slower edge alignment
+//
+
+#define AVG(a,b) (((int)(a) + (int)(b)) >> 1)
+#define AVG4(a,b,c,d) (((int)(a) + (int)(b) + (int)(c) + (int)(d)) >> 2)
+#define COLOR_ALG_NI 0
+#define COLOR_ALG_FAST 1
+#define COLOR_ALG_BEST 2
+#define BAYER_2BPP (BAYER_BPP+BAYER_BPP)
+//int color_alg = COLOR_ALG_BEST;
+int color_alg = COLOR_ALG_FAST;
+//int color_alg = COLOR_ALG_NI;
+
+void Bayer2RGB888(const XnUInt8* pBayerImage, XnUInt8* pRGBImage, 
+                  XnUInt32 nXRes, XnUInt32 nYRes, 
+                  XnUInt32 nDownSampleStep, XnUInt32 nBadPixels)
 {
+  if (color_alg == COLOR_ALG_NI)
+    {
 	XnUInt8 nRed;
 	XnUInt8 nGreen;
 	XnUInt8 nBlue;
@@ -126,4 +145,207 @@ void Bayer2RGB888(const XnUInt8* pBayerImage, XnUInt8* pRGBImage, XnUInt32 nXRes
 		pBayer += BAYER_LINE_LENGTH2;
 		pRGB += BAYER_RGB_LINE_LENGTH2;
 	} while (--nTotalRowsCount);
+    }
+
+
+  else
+    {
+      const XnUInt8 *s;
+      int i, j;
+      XnUInt8 v;
+
+      int ll = nXRes;
+      int ll2 = nXRes*2;
+
+      s = pBayerImage;
+      int pp2 = nXRes*BAYER_BPP*2;          // previous 2 color lines
+      int pp = nXRes*BAYER_BPP;             // previous color line
+      unsigned char *cd = (unsigned char *)pRGBImage;
+      //  unsigned char *dd = (unsigned char *)dest1; // for grayscale
+
+      if (color_alg == COLOR_ALG_FAST)
+        {
+          for (i=0; i<nYRes; i+=2)
+            {
+              // red line (GRGR...)
+              for (j=0; j<nXRes; j+=2, cd+=BAYER_2BPP) //, dd+=2)
+                {
+                  //              *dd = 
+                  *(cd+1) = *s++;   // green pixel
+                  v = *s++;
+                  *(cd+BAYER_BPP) = v;    // red pixel          
+                  *(cd+0) = AVG(*(cd+BAYER_BPP+0), *(cd-BAYER_BPP+0)); // interpolated red pixel
+                  if (i > 1)
+                    {
+                      *(cd-pp+0) = AVG(*(cd-pp2+0), *(cd+0)); // interpolated red pixel
+                      *(cd-pp+BAYER_BPP+0) = AVG(*(cd-pp2+BAYER_BPP+0), *(cd+BAYER_BPP+0)); // interpolated red pixel
+                      //                  *(dd-nXRes) = 
+                      *(cd-pp+1) = ((int)*(cd+1) + (int)*(cd-pp-BAYER_BPP+1) + (int)*(cd-pp+BAYER_BPP+1) + (int)*(cd-pp2+1)) >> 2;
+                    }
+                }		  	
+
+              // blue line (BGBG...)
+              v = *s;
+              *(cd+2) = v;     // blue pixel          
+              for (j=0; j<nXRes-2; j+=2, cd+=BAYER_2BPP)//, dd+=2)
+                {
+                  s++;
+                  //              *(dd+1) = 
+                  *(cd+BAYER_BPP+1) = *s++;      // green pixel
+                  v = *s;
+                  *(cd+BAYER_2BPP+2) = v;
+                  *(cd+BAYER_BPP+2) = AVG(*(cd+2), *(cd+BAYER_2BPP+2)); // interpolated blue pixel
+                  if (i > 1)
+                    {
+                      *(cd-pp+2) = AVG(*(cd-pp2+2), *(cd+2)); // interpolated blue pixel
+                      *(cd-pp+BAYER_BPP+2) = AVG(*(cd-pp2+BAYER_BPP+2), *(cd+BAYER_BPP+2)); // interpolated blue pixel
+                      //                  *(dd-nXRes+1) = 
+                      *(cd-pp+BAYER_BPP+1) = ((int)*(cd+BAYER_BPP+1) + (int)*(cd-pp+1) + (int)*(cd-pp+BAYER_2BPP+1) + (int)*(cd-pp2+BAYER_BPP+1)) >> 2;
+                    }
+                }		  	
+              // last pixels
+              s++;
+              //          *(dd+1) = 
+              *(cd+BAYER_BPP+1) = *s++;      // green pixel
+              *(cd+BAYER_BPP+2) = *(cd+2);	// interpolated blue pixel
+              if (i > 1)
+                {
+                  *(cd-pp+2) = AVG(*(cd-pp2+2), *(cd+2)); // interpolated blue pixel
+                  *(cd-pp+BAYER_BPP+2) = AVG(*(cd-pp2+BAYER_BPP+2), *(cd+BAYER_BPP+2)); // interpolated blue pixel
+                }
+              cd += BAYER_2BPP;
+              //          dd += 2;
+            }
+        }
+
+      // BEST color algorithm
+      // NB: no red/blue multiplication
+      else
+        {
+          int a,b,c,d;
+          int dc, dv, dh;
+          int ww;
+
+          // do first two lines
+          cd += pp2;
+          //      dd += ll2;
+          s += ll2;
+
+          for (i=0; i<nYRes-4; i+=2)
+            {
+              // GR line
+              // do first two pixels
+              cd += BAYER_2BPP;
+              //          dd += 2;
+              s += 2;
+
+              // do most of line
+              for (j=0; j<nXRes-4; j+=2, cd+=BAYER_2BPP)
+                {
+                  // green pixels
+                  //              *dd++ = 
+                  *(cd+1) = *s++;
+                  dc = 2*(int)*(s);
+                  dh = dc - (int)*(s-2) - (int)*(s+2);
+                  if (dh < 0) dh = -dh;
+                  dv = dc - (int)*(s-ll2) - (int)*(s+ll2);
+                  if (dv < 0) dv = -dv;
+                  if (dv > dh) // vert is stronger, use horz
+                    //*dd++ = 
+                        *(cd+BAYER_BPP+1) = ((int)*(s-1) + (int)*(s+1))>>1;
+                  else	// horz is stronger, use vert
+                    //*dd++ = 
+                        *(cd+BAYER_BPP+1) = ((int)*(s-ll) + (int)*(s+ll))>>1;
+
+                  // color pixels
+                  *(cd+BAYER_BPP+0) = *s;	// red pixel
+
+                  a = (int)*(s) - (int)*(cd+BAYER_BPP+1);
+                  b = (int)*(s-2) - (int)*(cd-BAYER_BPP+1);
+                  c = (int)*(s-ll2) - (int)*(cd-pp2+BAYER_BPP+1);
+                  d = (int)*(s-ll2-2) - (int)*(cd-pp2-BAYER_BPP+1);
+
+                  ww = 2*(int)*(cd+1) + (a + b);
+                  if (ww < 0) ww = 0;
+                  if (ww > 511) ww = 511;
+                  *(cd+0) = ww>>1;	// interpolated red pixel 
+
+                  ww = 2*(int)*(cd-pp+BAYER_BPP+1) + (a + c);
+                  if (ww < 0) ww = 0;
+                  if (ww > 511) ww = 511;
+                  *(cd-pp+BAYER_BPP+0) = ww>>1; // interpolated red pixel
+
+                  ww = 4*(int)*(cd-pp+1) + (a + b + c + d);
+                  if (ww < 0) ww = 0;
+                  if (ww > 1023) ww = 1023;
+                  *(cd-pp+0) = ww>>2; // interpolated red pixel
+
+                  s++;
+                }
+              // last two pixels
+              cd += BAYER_2BPP;
+              //          dd += 2;
+              s += 2;
+
+              // BG line
+              // do first two pixels
+              cd += BAYER_2BPP;
+              //          dd += 2;
+              s += 2;
+
+              // do most of line
+              for (j=0; j<nXRes-4; j+=2, cd+=BAYER_2BPP)
+                {
+                  dc = 2*(int)*s;
+                  dh = dc - (int)*(s-2) - (int)*(s+2);
+                  if (dh < 0) dh = -dh;
+                  dv = dc - (int)*(s-ll2) - (int)*(s+ll2);
+                  if (dv < 0) dv = -dv;
+                  if (dh < dv) // vert is stronger, use horz
+                    //*dd++ = 
+                        *(cd+1) = ((int)*(s-1) + (int)*(s+1))>>1;
+                  else	// horz is stronger, use vert
+                    //*dd++ = 
+                        *(cd+1) = ((int)*(s-ll) + (int)*(s+ll))>>1;
+                  //              *dd++ = 
+                  *(cd+BAYER_BPP+1) = *(s+1); // green pixel
+
+                  // color pixels
+                  *(cd+BAYER_BPP+2) = *s;	// blue pixel
+
+                  a = (int)*(s) - (int)*(cd+BAYER_BPP+1);
+                  b = (int)*(s-2) - (int)*(cd-BAYER_BPP+1);
+                  c = (int)*(s-ll2) - (int)*(cd-pp2+BAYER_BPP+1);
+                  d = (int)*(s-ll2-2) - (int)*(cd-pp2-BAYER_BPP+1);
+
+                  ww = 2*(int)*(cd+1) + (a + b);
+                  if (ww < 0) ww = 0;
+                  if (ww > 511) ww = 511;
+                  *(cd+2) = ww>>1;	// interpolated blue pixel 
+
+                  ww = 2*(int)*(cd-pp+BAYER_BPP+1) + (a + c);
+                  if (ww < 0) ww = 0;
+                  if (ww > 511) ww = 511;
+                  *(cd-pp+BAYER_BPP+2) = ww>>1; // interpolated blue pixel
+
+                  ww = 4*(int)*(cd-pp+1) + (a + b + c + d);
+                  if (ww < 0) ww = 0;
+                  if (ww > 1023) ww = 1023;
+                  *(cd-pp+2) = ww>>2; // interpolated blue pixel
+
+                  s+=2;
+                }
+              // last two pixels
+              cd += BAYER_2BPP;
+              //          dd += 2;
+              s += 2;
+            }
+
+          // last two lines
+          for (j=0; j<nXRes; j+=2)
+            {
+            }
+        }
+
+    }
 }
