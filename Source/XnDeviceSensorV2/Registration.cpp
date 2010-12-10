@@ -31,7 +31,6 @@
 #include "Registration.h"
 #include "XnSensorDepthStream.h"
 #include "XnSensor.h"
-#include <cstdlib>
 
 //---------------------------------------------------------------------------
 // Code
@@ -45,17 +44,6 @@ XnRegistration::XnRegistration() :
 	m_pTempBuffer(NULL),
 	m_bD2SAlloc(FALSE)
 {
-	// Allow changing the opcodes used for registration and padding (assume padding = registration + 1)
-	char *strRegistration = getenv("XN_HOST_PROTOCOL_ALGORITHM_REGISTRATION");
-	if (strRegistration) {
-		int nRegistration = strtol(strRegistration, NULL, 16);
-		m_nRegistration = (XnHostProtocolAlgorithmType)nRegistration;
-		m_nPadding = (XnHostProtocolAlgorithmType)(nRegistration + 1);
-	}
-	else {
-		m_nRegistration = XN_HOST_PROTOCOL_ALGORITHM_REGISTRATION;
-		m_nPadding = XN_HOST_PROTOCOL_ALGORITHM_PADDING;
-	}
 }
 
 inline XnDouble XnRegistrationFunction1000(XnDouble a, XnDouble b, XnDouble c, XnDouble d, XnDouble e, XnDouble f, XnInt16 x, XnInt16 y)
@@ -95,7 +83,7 @@ XnStatus XnRegistration::BuildRegTable1000()
 	
 	// take needed parameters to perform registration
 	XnRegistrationInformation1000 regInfo1000;
-	nRetVal = XnHostProtocolAlgorithmParams(m_pDevicePrivateData, m_nRegistration, &regInfo1000, sizeof(regInfo1000), m_pDepthStream->GetResolution(), m_pDepthStream->GetFPS());
+	nRetVal = XnHostProtocolAlgorithmParams(m_pDevicePrivateData, XN_HOST_PROTOCOL_ALGORITHM_REGISTRATION, &regInfo1000, sizeof(regInfo1000), m_pDepthStream->GetResolution(), m_pDepthStream->GetFPS());
 	XN_IS_STATUS_OK(nRetVal);
 	
 	XnUInt16* pRegTable = m_pRegistrationTable;
@@ -285,11 +273,11 @@ XnStatus XnRegistration::BuildRegTable1080()
 	
 	// take needed parameters to perform registration
 	XnRegistrationInformation1080 RegData;
-	nRetVal = XnHostProtocolAlgorithmParams(m_pDevicePrivateData, m_nRegistration, &RegData, sizeof(RegData), m_pDepthStream->GetResolution(), m_pDepthStream->GetFPS());
+	nRetVal = XnHostProtocolAlgorithmParams(m_pDevicePrivateData, XN_HOST_PROTOCOL_ALGORITHM_REGISTRATION, &RegData, sizeof(RegData), m_pDepthStream->GetResolution(), m_pDepthStream->GetFPS());
 	XN_IS_STATUS_OK(nRetVal);
 
 	xnOSMemSet(&m_padInfo, 0, sizeof(m_padInfo));
-	nRetVal = XnHostProtocolAlgorithmParams(m_pDevicePrivateData, m_nPadding, &m_padInfo, sizeof(m_padInfo), m_pDepthStream->GetResolution(), m_pDepthStream->GetFPS());
+	nRetVal = XnHostProtocolAlgorithmParams(m_pDevicePrivateData, XN_HOST_PROTOCOL_ALGORITHM_PADDING, &m_padInfo, sizeof(m_padInfo), m_pDepthStream->GetResolution(), m_pDepthStream->GetFPS());
 	XN_IS_STATUS_OK(nRetVal);
 
 	XN_VALIDATE_ALIGNED_CALLOC(m_pDepthToShiftTable, XnUInt16, m_pDepthStream->GetXRes()*m_pDepthStream->GetYRes(), XN_DEFAULT_MEM_ALIGN);

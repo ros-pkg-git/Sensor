@@ -32,7 +32,6 @@
 // Includes
 //---------------------------------------------------------------------------
 #include "XnDeviceSensor.h"
-#include "XnHostProtocol.h"
 
 #define XN_REG_PARAB_COEFF 4
 #define XN_REG_X_SCALE	16
@@ -69,9 +68,6 @@ private:
 	XnDepthPixel* m_pTempBuffer;
 	XnDouble m_dShiftFactor;
 	XnBool m_b1000;
-
-	XnHostProtocolAlgorithmType m_nRegistration;
-	XnHostProtocolAlgorithmType m_nPadding;
 };
 
 #endif //_XN_RGBREG_H_
