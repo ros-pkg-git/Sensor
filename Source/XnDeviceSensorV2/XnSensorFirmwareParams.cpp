@@ -451,10 +451,10 @@ XnStatus XnSensorFirmwareParams::SetImageResolution(XnUInt64 nValue)
 	case XN_RESOLUTION_VGA:
 		break;
 	case XN_RESOLUTION_SXGA:
-		if (m_pInfo->nFWVer < XN_SENSOR_FW_VER_5_3)
-		{
-			XN_LOG_WARNING_RETURN(XN_STATUS_IO_INVALID_STREAM_IMAGE_RESOLUTION, XN_MASK_DEVICE_SENSOR, "Image resolution is not supported by this firmware!");
-		}
+		//if (m_pInfo->nFWVer < XN_SENSOR_FW_VER_5_3)
+		//{
+		//	XN_LOG_WARNING_RETURN(XN_STATUS_IO_INVALID_STREAM_IMAGE_RESOLUTION, XN_MASK_DEVICE_SENSOR, "Image resolution is not supported by this firmware!");
+		//}
 		break;
 	case XN_RESOLUTION_UXGA:
 		if (m_pInfo->nFWVer < XN_SENSOR_FW_VER_5_1)
