@@ -175,7 +175,7 @@ XnStatus XnSensorImageStream::ValidateMode()
 	//}
 
 	// check output format
-	if (nOutputFormat == XN_OUTPUT_FORMAT_GRAYSCALE8 && nInputFormat != XN_IO_IMAGE_FORMAT_BAYER)
+	if (nOutputFormat == XN_OUTPUT_FORMAT_GRAYSCALE8 && nInputFormat != XN_IO_IMAGE_FORMAT_BAYER && nInputFormat != XN_IO_IMAGE_FORMAT_UNCOMPRESSED_BAYER )
 	{
 		XN_LOG_WARNING_RETURN(XN_STATUS_DEVICE_BAD_PARAM, XN_MASK_DEVICE_SENSOR, "Grayscale8 output requires BAYER input!");
 	}
