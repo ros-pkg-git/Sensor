@@ -271,6 +271,9 @@ XnStatus XnSensorDepthStream::ConfigureStreamImpl()
 	nRetVal = m_Helper.GetCmosInfo()->SetCmosConfig(XN_CMOS_TYPE_DEPTH, GetResolution(), GetFPS());
 	XN_IS_STATUS_OK(nRetVal);
 
+	// Thanks to avin again! :-)
+	XnHostProtocolSetParam(GetHelper()->GetPrivateData(), 0x105, 0);
+
 	return XN_STATUS_OK;
 }
 
