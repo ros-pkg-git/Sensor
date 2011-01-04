@@ -88,7 +88,7 @@ public:
 
 	XnStatus CloseDevice();
 
-	static XnStatus EnumerateSensors(XnUSBConnectionString** devicePaths, XnUInt32& numSensors );
+	static XnStatus GetNumOfSensors(XnUInt32* pnNumSensors);
 
 	inline XnBool IsMiscEndpointSupported() const { return m_bMiscSupported; }
 
