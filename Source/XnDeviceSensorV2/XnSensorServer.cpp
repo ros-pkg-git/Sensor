@@ -22,7 +22,15 @@
 
 
 
+/**
+	Suat Gedikli, 31.12.2010 : Multiple Device support
+	
+ Stream names on server side are connectionString + streamType, which make them
+ unique unless devices dont only multiple streams with same type. e.g.
+ stream name Image on device 045e/02ae@2/91 -> 045e/02ae@2/91Image
 
+	SensorContext struct contains all information for a single device.
+*/
 
 
 //---------------------------------------------------------------------------
@@ -35,6 +43,7 @@
 #include <XnDDK/XnStreamDataInternal.h>
 #include <XnStringsHash.h>
 
+using namespace std;
 //---------------------------------------------------------------------------
 // Defines
 //---------------------------------------------------------------------------
@@ -62,6 +71,15 @@ typedef struct XnServerStream
 XN_DECLARE_STRINGS_HASH(XnDeviceString, XnNamesHash);
 XN_DECLARE_STRINGS_HASH(XnServerStream, XnServerStreamsHash);
 
+struct XnSensorServer::SensorContext
+{
+	XnSensor sensor;
+	XnPropertySetData m_allStreamsProps;
+	XnServerStreamsHash* m_pServerStreams;
+	XnSensorServer* server; // Suat: ugly workaround!
+	const XnChar* strConnectionString; // Suat: ugly workaround!
+};
+	
 struct XnSensorServer::XnClient
 {
 	XnClient()
@@ -141,6 +159,7 @@ struct XnSensorServer::XnClient
 	XnNamesHash serverToClientNames;
 	volatile XnBool bShouldRun;
 	XnNamesHash openStreams;
+	XnChar strConnectionString[XN_DEVICE_MAX_STRING_LENGTH];
 };
 
 #define XN_SENSOR_SERVER_LOCK_BLOCK						XnAutoCSLocker __locker(m_hSensorLock);
@@ -150,7 +169,6 @@ struct XnSensorServer::XnClient
 // XnSensorServer class
 //---------------------------------------------------------------------------
 XnSensorServer::XnSensorServer() :
-	m_bSensorOpen(FALSE),
 	m_hListenSocket(NULL),
 	m_hReaderThread(NULL),
 	m_hNewDataEvent(NULL),
@@ -160,7 +178,6 @@ XnSensorServer::XnSensorServer() :
 	m_hBroadcastingLock(NULL),
 	m_hClientsCriticalSection(NULL),
 	m_nLastClientID(0),
-	m_pServerStreams(NULL),
 	m_noClientTimeout(XN_MODULE_PROPERTY_SERVER_NO_CLIENTS_TIMEOUT, XN_SENSOR_DEFAULT_SERVER_WAIT_FOR_CLIENT_TIME),
 	m_startNewLog(XN_MODULE_PROPERTY_SERVER_START_NEW_LOG_FILE),
 	m_nErrorState(XN_STATUS_OK)
@@ -207,6 +224,7 @@ XnBool XnSensorServer::IsServerRunning()
 
 XnStatus XnSensorServer::InitServer(const XnChar* strConfigFile)
 {
+	strcpy ( m_global_config_file, strConfigFile );
 	XnStatus nRetVal = XN_STATUS_OK;
 	nRetVal = xnOSCreateNamedMutex(&m_hServerRunningMutex, XN_SENSOR_SERVER_RUNNING_MUTEX_NAME);
 	XN_IS_STATUS_OK(nRetVal);
@@ -241,9 +259,6 @@ XnStatus XnSensorServer::InitServer(const XnChar* strConfigFile)
 		return XN_STATUS_DEVICE_SERVER_ALREADY_RUNNING;
 	}
 
-	nRetVal = m_sensor.SetGlobalConfigFile(strConfigFile);
-	XN_IS_STATUS_OK(nRetVal);
-
 	// read default timeout from file
 	nRetVal = m_noClientTimeout.ReadValueFromFile(strConfigFile, XN_CONFIG_FILE_SERVER_SECTION);
 	XN_IS_STATUS_OK(nRetVal);
@@ -270,14 +285,7 @@ XnStatus XnSensorServer::InitServer(const XnChar* strConfigFile)
 	nRetVal = xnOSBindSocket(m_hListenSocket);
 	XN_IS_STATUS_OK(nRetVal);
 
-	// register to events
-	nRetVal = m_sensor.OnStreamCollectionChangedEvent().Register(StreamCollectionChangedCallback, this);
-	XN_IS_STATUS_OK(nRetVal);
-
-	nRetVal = m_sensor.OnNewStreamDataEvent().Register(NewStreamDataCallback, this);
-	XN_IS_STATUS_OK(nRetVal);
-
-	XN_VALIDATE_NEW(m_pServerStreams, XnServerStreamsHash);
+	
 
 	nRetVal = xnOSCreateEvent(&m_hNewDataEvent, FALSE);
 	XN_IS_STATUS_OK(nRetVal);
@@ -309,24 +317,39 @@ XnStatus XnSensorServer::OpenSensor(const XnChar* strConnectionString)
 	config.pInitialValues = NULL;
 	config.SharingMode = XN_DEVICE_SHARED;
 
-	nRetVal = m_sensor.Init(&config);
-	XN_IS_STATUS_OK(nRetVal);
+	if (m_sensors.find(strConnectionString) == m_sensors.end() )
+	{
+		// create new context for new sensor
+		SensorContext* sensorContext = new SensorContext;
+		sensorContext->server = this;
+		sensorContext->strConnectionString = strConnectionString;
+		XN_VALIDATE_NEW(sensorContext->m_pServerStreams, XnServerStreamsHash);
+		
+		XnSensor& sensor = sensorContext->sensor;
+		nRetVal = sensor.SetGlobalConfigFile(m_global_config_file);
+		XN_IS_STATUS_OK(nRetVal);
+		
+		nRetVal = sensor.OnStreamCollectionChangedEvent().Register(StreamCollectionChangedCallback, sensorContext);
+		XN_IS_STATUS_OK(nRetVal);
 
-	XN_VALIDATE_ADD_PROPERTIES(m_sensor.DeviceModule(), 
-		&m_startNewLog, &m_noClientTimeout);
+		nRetVal = sensor.OnNewStreamDataEvent().Register(NewStreamDataCallback, sensorContext);
+		XN_IS_STATUS_OK(nRetVal);
+	
+		nRetVal = sensor.Init(&config);
+		XN_IS_STATUS_OK(nRetVal);	
+		
+		XN_VALIDATE_ADD_PROPERTIES(sensor.DeviceModule(), &m_startNewLog, &m_noClientTimeout);
+		
+		XN_PROPERTY_SET_CREATE_ON_STACK(props);
+		nRetVal = sensor.DeviceModule()->GetAllProperties(&props);
+		XN_IS_STATUS_OK(nRetVal);
 
-	// configure from global file
-	nRetVal = m_sensor.ConfigureModuleFromGlobalFile(XN_MODULE_NAME_DEVICE, XN_CONFIG_FILE_SERVER_SECTION);
-	XN_IS_STATUS_OK(nRetVal);
-
-	// register to all properties
-	XN_PROPERTY_SET_CREATE_ON_STACK(props);
-	nRetVal = m_sensor.DeviceModule()->GetAllProperties(&props);
-	XN_IS_STATUS_OK(nRetVal);
-
-	nRetVal = RegisterToProps(&props);
-	XN_IS_STATUS_OK(nRetVal);
-
+		nRetVal = RegisterToProps(sensorContext, &props);
+		XN_IS_STATUS_OK(nRetVal);
+		
+		m_sensors[strConnectionString] = sensorContext;
+	}
+	
 	return (XN_STATUS_OK);
 }
 
@@ -446,22 +469,23 @@ void XnSensorServer::ShutdownServer()
 		m_hServerRunningEvent = NULL;
 	}
 
-	nRetVal = m_sensor.Destroy();
-	if (nRetVal != XN_STATUS_OK)
+	for (map<string, SensorContext*>::iterator sensorIt = m_sensors.begin(); sensorIt != m_sensors.end(); ++sensorIt )
 	{
-		xnLogWarning(XN_MASK_SENSOR_SERVER, "Failed to destroy sensor: %s", xnGetStatusString(nRetVal));
-		XN_ASSERT(FALSE);
+		nRetVal = sensorIt->second->sensor.Destroy();
+		if (nRetVal != XN_STATUS_OK)
+		{
+			xnLogWarning(XN_MASK_SENSOR_SERVER, "Failed to destroy sensor: %s", xnGetStatusString(nRetVal));
+			XN_ASSERT(FALSE);
+		}
+		XN_DELETE(sensorIt->second->m_pServerStreams);
+		sensorIt->second->m_pServerStreams = NULL;
+
+		for (XnPropertySetData::Iterator it = sensorIt->second->m_allStreamsProps.begin(); it != sensorIt->second->m_allStreamsProps.end(); ++it)
+		{
+			XN_DELETE(it.Value());
+		}
+		sensorIt->second->m_allStreamsProps.Clear();
 	}
-
-	XN_DELETE(m_pServerStreams);
-	m_pServerStreams = NULL;
-
-	for (XnPropertySetData::Iterator it = m_allStreamsProps.begin(); it != m_allStreamsProps.end(); ++it)
-	{
-		XN_DELETE(it.Value());
-	}
-	m_allStreamsProps.Clear();
-
 	XN_ASSERT(m_clients.IsEmpty());
 
 	if (m_hNewDataEvent != NULL)
@@ -501,7 +525,7 @@ void XnSensorServer::ShutdownServer()
 	}
 }
 
-XnStatus XnSensorServer::RegisterToProps(XnPropertySet* pProps)
+XnStatus XnSensorServer::RegisterToProps(SensorContext* sensorContext, XnPropertySet* pProps)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 	
@@ -510,7 +534,7 @@ XnStatus XnSensorServer::RegisterToProps(XnPropertySet* pProps)
 		XnActualPropertiesHash* pHash = itMod.Value();
 
 		XnDeviceModule* pModule;
-		nRetVal = m_sensor.FindModule(itMod.Key(), &pModule);
+		nRetVal = sensorContext->sensor.FindModule(itMod.Key(), &pModule);
 		XN_IS_STATUS_OK(nRetVal);
 
 		for (XnActualPropertiesHash::Iterator itProp = pHash->begin(); itProp != pHash->end(); ++itProp)
@@ -521,7 +545,7 @@ XnStatus XnSensorServer::RegisterToProps(XnPropertySet* pProps)
 
 			// no need to keep the handle. We only want to unregister when the stream is destroyed, and then
 			// it happens anyway.
-			nRetVal = pProp->OnChangeEvent().Register(PropertyChangedCallback, this);
+			nRetVal = pProp->OnChangeEvent().Register(PropertyChangedCallback, sensorContext);
 			XN_IS_STATUS_OK(nRetVal);
 		}
 	}
@@ -547,17 +571,17 @@ void XnSensorServer::DumpMessage(const XnChar* strType, XnUInt32 nSize /* = 0 */
 	xnDumpWriteString(m_serverDump, "%llu,%s,%d,%d,%s\n", nNow, strType, nSize, nClientID, strComment);
 }
 
-XnStatus XnSensorServer::OnStreamAdded(const XnChar* StreamName)
+XnStatus XnSensorServer::OnStreamAdded(SensorContext* sensorContext, const XnChar* StreamName)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 
 	// get all props
 	XN_PROPERTY_SET_CREATE_ON_STACK(props);
-	nRetVal = m_sensor.GetAllProperties(&props, FALSE, StreamName);
+	nRetVal = sensorContext->sensor.GetAllProperties(&props, FALSE, StreamName);
 	XN_IS_STATUS_OK(nRetVal);
 
 	// register to all props
-	nRetVal = RegisterToProps(&props);
+	nRetVal = RegisterToProps(sensorContext, &props);
 	XN_IS_STATUS_OK(nRetVal);
 
 	XnActualPropertiesHash* pStreamProps = props.pData->begin().Value();
@@ -573,23 +597,23 @@ XnStatus XnSensorServer::OnStreamAdded(const XnChar* StreamName)
 	XN_IS_STATUS_OK(nRetVal);
 
 	// add it to property list
-	nRetVal = XnPropertySetDataAttachModule(&m_allStreamsProps, StreamName, pStreamProps);
+	nRetVal = XnPropertySetDataAttachModule(&sensorContext->m_allStreamsProps, StreamName, pStreamProps);
 	XN_IS_STATUS_OK(nRetVal);
 
 	// create stream data
 	XnServerStream serverStream;
 	xnOSMemSet(&serverStream, 0, sizeof(serverStream));
 	strcpy(serverStream.strType, StreamName);
-	nRetVal = m_sensor.CreateStreamData(StreamName, &serverStream.pStreamData);
+	nRetVal = sensorContext->sensor.CreateStreamData(StreamName, &serverStream.pStreamData);
 	XN_IS_STATUS_OK(nRetVal);
 
-	nRetVal = m_pServerStreams->Set(StreamName, serverStream);
+	nRetVal = sensorContext->m_pServerStreams->Set(StreamName, serverStream);
 	XN_IS_STATUS_OK(nRetVal);
 
 	return (XN_STATUS_OK);
 }
 
-XnStatus XnSensorServer::OnStreamRemoved(const XnChar* StreamName)
+XnStatus XnSensorServer::OnStreamRemoved(SensorContext* sensorContext, const XnChar* StreamName)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 	
@@ -597,18 +621,18 @@ XnStatus XnSensorServer::OnStreamRemoved(const XnChar* StreamName)
 
 	// remove stream data
 	XnServerStream* pServerStream;
-	nRetVal = m_pServerStreams->Get(StreamName, pServerStream);
+	nRetVal = sensorContext->m_pServerStreams->Get(StreamName, pServerStream);
 	XN_IS_STATUS_OK(nRetVal);
 
-	nRetVal = m_sensor.DestroyStreamData(&pServerStream->pStreamData);
+	nRetVal = sensorContext->sensor.DestroyStreamData(&pServerStream->pStreamData);
 	XN_IS_STATUS_OK(nRetVal);
 
-	nRetVal = m_pServerStreams->Remove(StreamName);
+	nRetVal = sensorContext->m_pServerStreams->Remove(StreamName);
 	XN_IS_STATUS_OK(nRetVal);
 
 	// remove from our list
 	XnActualPropertiesHash* pStreamProps = NULL;
-	nRetVal = XnPropertySetDataDetachModule(&m_allStreamsProps, StreamName, &pStreamProps);
+	nRetVal = XnPropertySetDataDetachModule(&sensorContext->m_allStreamsProps, StreamName, &pStreamProps);
 	XN_IS_STATUS_OK(nRetVal);
 
 	XN_DELETE(pStreamProps);
@@ -616,7 +640,7 @@ XnStatus XnSensorServer::OnStreamRemoved(const XnChar* StreamName)
 	return (XN_STATUS_OK);
 }
 
-XnStatus XnSensorServer::OnStreamCollectionChanged(const XnChar* StreamName, XnStreamsChangeEventType EventType)
+XnStatus XnSensorServer::OnStreamCollectionChanged(SensorContext* sensorContext, const XnChar* StreamName, XnStreamsChangeEventType EventType)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 	
@@ -624,13 +648,13 @@ XnStatus XnSensorServer::OnStreamCollectionChanged(const XnChar* StreamName, XnS
 	{
 	case XN_DEVICE_STREAM_ADDED:
 		{
-			nRetVal = OnStreamAdded(StreamName);
+			nRetVal = OnStreamAdded(sensorContext, StreamName);
 			XN_IS_STATUS_OK(nRetVal);
 			break;
 		}
 	case XN_DEVICE_STREAM_DELETED:
 		{
-			nRetVal = OnStreamRemoved(StreamName);
+			nRetVal = OnStreamRemoved(sensorContext, StreamName);
 			XN_IS_STATUS_OK(nRetVal);
 			break;
 		}
@@ -641,7 +665,7 @@ XnStatus XnSensorServer::OnStreamCollectionChanged(const XnChar* StreamName, XnS
 	return (XN_STATUS_OK);
 }
 
-XnStatus XnSensorServer::OnPropertyChanged(const XnProperty* pProp)
+XnStatus XnSensorServer::OnPropertyChanged(SensorContext* sensorContext, const XnProperty* pProp)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 
@@ -686,7 +710,7 @@ XnStatus XnSensorServer::OnPropertyChanged(const XnProperty* pProp)
 
 			// find its size from properties map
 			XnActualPropertiesHash* pModule;
-			nRetVal = m_allStreamsProps.Get(pProp->GetModule(), pModule);
+			nRetVal = sensorContext->m_allStreamsProps.Get(pProp->GetModule(), pModule);
 			XN_IS_STATUS_OK(nRetVal);
 
 			XnProperty* pActualProp;
@@ -780,7 +804,6 @@ XnStatus XnSensorServer::OnPropertyChanged(const XnProperty* pProp)
 XnStatus XnSensorServer::ReadStreams()
 {
 	XnStatus nRetVal = XN_STATUS_OK;
-	
 	while (IsServerRunning())
 	{
 		nRetVal = xnOSWaitEvent(m_hNewDataEvent, XN_NODE_WAIT_FOR_DATA_TIMEOUT);
@@ -801,41 +824,46 @@ XnStatus XnSensorServer::ReadStreams()
 			XnChar strName[XN_MAX_NAME_LENGTH];
 		} NewStreamData;
 
-		NewStreamData aNewStreamData[5];
+		NewStreamData aNewStreamData[100]; // Suat: just in case set from 5 to 100
+		vector<string> device(100);        // Suat: need to know which sensor too
 		XnUInt32 nCount = 0;
 
 		// read streams with lock
 		{
 			XN_SENSOR_SERVER_LOCK_BLOCK;
-			for (XnServerStreamsHash::Iterator it = m_pServerStreams->begin(); it != m_pServerStreams->end(); ++it)
+			for (map<string, SensorContext*>::iterator sensorIt = m_sensors.begin(); sensorIt != m_sensors.end(); ++sensorIt)
 			{
-				XnServerStream& stream = it.Value();
-
-				if (stream.bNewData)
+				for (XnServerStreamsHash::Iterator it = sensorIt->second->m_pServerStreams->begin(); it != sensorIt->second->m_pServerStreams->end(); ++it)
 				{
-					// ignore audio (it is read by every client)
-					if (strcmp(stream.strType, XN_STREAM_NAME_AUDIO) != 0)
+					XnServerStream& stream = it.Value();
+
+					if (stream.bNewData)
 					{
-						// read this data
-						nRetVal = m_sensor.ReadStream(stream.pStreamData);
-						if (nRetVal != XN_STATUS_OK)
+						// ignore audio (it is read by every client)
+						if (strcmp(stream.strType, XN_STREAM_NAME_AUDIO) != 0)
 						{
-							xnLogWarning(XN_MASK_SENSOR_SERVER, "Failed reading from stream %s (though event was raised): %s", stream.strType, xnGetStatusString(nRetVal));
-							stream.bNewData = FALSE;
-							continue;
+							// read this data
+							nRetVal = sensorIt->second->sensor.ReadStream(stream.pStreamData);
+							if (nRetVal != XN_STATUS_OK)
+							{
+								xnLogWarning(XN_MASK_SENSOR_SERVER, "Failed reading from stream %s (though event was raised): %s", stream.strType, xnGetStatusString(nRetVal));
+								stream.bNewData = FALSE;
+								continue;
+							}
 						}
+
+						stream.bNewData = FALSE;
+
+						aNewStreamData[nCount].nTimestamp = stream.pStreamData->nTimestamp;
+						aNewStreamData[nCount].nFrameID = stream.pStreamData->nFrameID;
+						strcpy(aNewStreamData[nCount].strName, stream.strType);
+						device[nCount] = sensorIt->first; // ConnectionString!
+						nCount++;
 					}
-
-					stream.bNewData = FALSE;
-
-					aNewStreamData[nCount].nTimestamp = stream.pStreamData->nTimestamp;
-					aNewStreamData[nCount].nFrameID = stream.pStreamData->nFrameID;
-					strcpy(aNewStreamData[nCount].strName, stream.strType);
-					nCount++;
-				}
-			} // streams loop
+				} // streams loop
+			} // sensor loop
 		} // lock
-
+			
 		// now send notifications (outside of server lock)
 		for (XnUInt32 i = 0; i < nCount; ++i)
 		{
@@ -844,14 +872,16 @@ XnStatus XnSensorServer::ReadStreams()
 			{
 				XnClient* pClient = *it;
 
-				// check if client has stream open
-				if (!pClient->IsStreamOpen(aNewStreamData[i].strName))
+				// check if client has stream open and if right device!
+				
+				if (!pClient->IsStreamOpen(aNewStreamData[i].strName) || pClient->strConnectionString != device[i])
 				{
 					continue;
 				}
-
-				// notify about the new data
+				
 				const XnChar* strStreamName = pClient->FromServerModule(aNewStreamData[i].strName);
+				
+				// notify about the new data
 				if (strStreamName != NULL)
 				{
 					XnSensorServerNewStreamData message;
@@ -876,12 +906,12 @@ XnStatus XnSensorServer::ReadStreams()
 	return (XN_STATUS_OK);
 }
 
-XnStatus XnSensorServer::OnNewStreamData(const XnChar* StreamName)
+XnStatus XnSensorServer::OnNewStreamData(SensorContext* sensorContext, const XnChar* StreamName)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 
 	XnServerStream* pStream;
-	nRetVal = m_pServerStreams->Get(StreamName, pStream);
+	nRetVal = sensorContext->m_pServerStreams->Get(StreamName, pStream);
 	XN_IS_STATUS_OK(nRetVal);
 
 	pStream->bNewData = TRUE;
@@ -892,14 +922,14 @@ XnStatus XnSensorServer::OnNewStreamData(const XnChar* StreamName)
 	return (XN_STATUS_OK);
 }
 
-XnStatus XnSensorServer::SendInitialState(XnClient* pClient)
+XnStatus XnSensorServer::SendInitialState(XnSensor& sensor, XnClient* pClient)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 	
 	XN_PROPERTY_SET_CREATE_ON_STACK(props);
 
 	// get it
-	nRetVal = m_sensor.GetAllProperties(&props, TRUE);
+	nRetVal = sensor.GetAllProperties(&props, TRUE);
 	XN_IS_STATUS_OK(nRetVal);
 
 	// and send it
@@ -1002,7 +1032,7 @@ XnStatus XnSensorServer::RemoveClientStream(XnClient* pClient, const XnChar* str
 	if (nRetVal == XN_STATUS_OK)
 	{
 		XnSharedMemoryBufferPool* pBufferPool = NULL;
-		nRetVal = m_sensor.GetSharedBufferPool(strServerName, &pBufferPool);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetSharedBufferPool(strServerName, &pBufferPool);
 		XN_IS_STATUS_OK(nRetVal);
 
 		if (pStreamData->pInternal->pLockedBuffer != NULL)
@@ -1017,7 +1047,7 @@ XnStatus XnSensorServer::RemoveClientStream(XnClient* pClient, const XnChar* str
 
 	// and dec ref it
 	XnServerStream* pStream;
-	nRetVal = m_pServerStreams->Get(strServerName, pStream);
+	nRetVal = m_sensors[pClient->strConnectionString]->m_pServerStreams->Get(strServerName, pStream);
 	if (nRetVal == XN_STATUS_OK)
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
@@ -1027,8 +1057,8 @@ XnStatus XnSensorServer::RemoveClientStream(XnClient* pClient, const XnChar* str
 
 		if (pStream->nRefCount == 0)
 		{
-			m_sensor.CloseStream(strServerName);
-			m_sensor.DestroyStream(strServerName);
+			m_sensors[pClient->strConnectionString]->sensor.CloseStream(strServerName);
+			m_sensors[pClient->strConnectionString]->sensor.DestroyStream(strServerName);
 
 			// the rest will be done in the OnStreamRemoved event handler...
 		}
@@ -1072,14 +1102,14 @@ XnStatus XnSensorServer::ReturnToDefaults()
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 
-	// This is a bit ugly, but we need to manually set back to default DEVICE properties
-	// (we know there aren't any streams and clients, but the Device module always remains)
-	nRetVal = m_sensor.SetProperty(XN_MODULE_NAME_DEVICE, XN_MODULE_PROPERTY_FRAME_SYNC, (XnUInt64)FALSE);
-	XN_IS_STATUS_OK(nRetVal);
+	for ( map< string, SensorContext* >::iterator sensorIt = m_sensors.begin(); sensorIt != m_sensors.end(); ++sensorIt )
+	{	
+		nRetVal = sensorIt->second->sensor.SetProperty(XN_MODULE_NAME_DEVICE, XN_MODULE_PROPERTY_FRAME_SYNC, (XnUInt64)FALSE);
+		XN_IS_STATUS_OK(nRetVal);
 
-	nRetVal = m_sensor.ConfigureModuleFromGlobalFile(XN_MODULE_NAME_DEVICE);
-	XN_IS_STATUS_OK(nRetVal);
-	
+		nRetVal = sensorIt->second->sensor.ConfigureModuleFromGlobalFile(XN_MODULE_NAME_DEVICE);
+		XN_IS_STATUS_OK(nRetVal);
+	}	
 	return (XN_STATUS_OK);
 }
 
@@ -1111,26 +1141,25 @@ XnStatus XnSensorServer::HandleOpenSensor(XnClient* pClient)
 	XnStatus nRetVal = XN_STATUS_OK;
 
 	// read it
-	XnChar strConnectionString[XN_DEVICE_MAX_STRING_LENGTH];
 	XnUInt32 nDataSize = XN_DEVICE_MAX_STRING_LENGTH;
-	nRetVal = pClient->pPrivateIncomingPacker->ReadCustomData(XN_SENSOR_SERVER_MESSAGE_OPEN_SENSOR, strConnectionString, &nDataSize);
+	nRetVal = pClient->pPrivateIncomingPacker->ReadCustomData(XN_SENSOR_SERVER_MESSAGE_OPEN_SENSOR, pClient->strConnectionString, &nDataSize);
 	XN_IS_STATUS_OK(nRetVal);
 
-	xnLogVerbose(XN_MASK_SENSOR_SERVER, "Client %u requested to open sensor %s", pClient->nID, strConnectionString);
+	xnLogVerbose(XN_MASK_SENSOR_SERVER, "Client %u requested to open sensor %s", pClient->nID, pClient->strConnectionString);
 
 	// make sure sensor is open
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		if (!m_bSensorOpen)
+		
+		if (m_sensors.find(pClient->strConnectionString) == m_sensors.end() )
 		{
-			nRetVal = OpenSensor(strConnectionString);
-			m_bSensorOpen = (nRetVal == XN_STATUS_OK);
+			nRetVal = OpenSensor(pClient->strConnectionString);
 		}
 
 		if (nRetVal == XN_STATUS_OK)
 		{
 			// sensor is open. send client its initial state
-			nRetVal = SendInitialState(pClient);
+			nRetVal = SendInitialState(m_sensors[pClient->strConnectionString]->sensor, pClient);
 		}
 	}
 
@@ -1159,7 +1188,7 @@ XnStatus XnSensorServer::HandleSetIntProperty(XnClient* pClient)
 
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.SetProperty(pClient->ToServerModule(strModule), strProp, nValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.SetProperty(pClient->ToServerModule(strModule), strProp, nValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GENERAL_OP_RESPOND, nRetVal);
@@ -1184,7 +1213,7 @@ XnStatus XnSensorServer::HandleSetRealProperty(XnClient* pClient)
 	// set
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.SetProperty(pClient->ToServerModule(strModule), strProp, dValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.SetProperty(pClient->ToServerModule(strModule), strProp, dValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GENERAL_OP_RESPOND, nRetVal);
@@ -1209,7 +1238,7 @@ XnStatus XnSensorServer::HandleSetStringProperty(XnClient* pClient)
 	// set
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.SetProperty(pClient->ToServerModule(strModule), strProp, strValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.SetProperty(pClient->ToServerModule(strModule), strProp, strValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GENERAL_OP_RESPOND, nRetVal);
@@ -1234,7 +1263,7 @@ XnStatus XnSensorServer::HandleSetGeneralProperty(XnClient* pClient)
 	// set
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.SetProperty(pClient->ToServerModule(strModule), strProp, gbValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.SetProperty(pClient->ToServerModule(strModule), strProp, gbValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GENERAL_OP_RESPOND, nRetVal);
@@ -1246,7 +1275,7 @@ XnStatus XnSensorServer::HandleSetGeneralProperty(XnClient* pClient)
 XnStatus XnSensorServer::HandleGetIntProperty(XnClient* pClient)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
-	
+
 	// read it
 	XnSensorServerMessageGetPropertyRequest request;
 	XnUInt32 nDataSize = sizeof(request);
@@ -1261,7 +1290,7 @@ XnStatus XnSensorServer::HandleGetIntProperty(XnClient* pClient)
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
 
-		nRetVal = m_sensor.GetProperty(pClient->ToServerModule(request.strModuleName), request.strPropertyName, &nValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetProperty(pClient->ToServerModule(request.strModuleName), request.strPropertyName, &nValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GET_INT_PROPERTY, nRetVal, sizeof(nValue), &nValue);
@@ -1288,7 +1317,7 @@ XnStatus XnSensorServer::HandleGetRealProperty(XnClient* pClient)
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
 
-		nRetVal = m_sensor.GetProperty(pClient->ToServerModule(request.strModuleName), request.strPropertyName, &dValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetProperty(pClient->ToServerModule(request.strModuleName), request.strPropertyName, &dValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GET_REAL_PROPERTY, nRetVal, sizeof(dValue), &dValue);
@@ -1315,7 +1344,7 @@ XnStatus XnSensorServer::HandleGetStringProperty(XnClient* pClient)
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
 
-		nRetVal = m_sensor.GetProperty(pClient->ToServerModule(request.strModuleName), request.strPropertyName, strValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetProperty(pClient->ToServerModule(request.strModuleName), request.strPropertyName, strValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GET_STRING_PROPERTY, nRetVal, sizeof(strValue), strValue);
@@ -1344,7 +1373,7 @@ XnStatus XnSensorServer::HandleGetGeneralProperty(XnClient* pClient)
 	XnGeneralBuffer gbValue = XnGeneralBufferPack(pData, pRequest->nSize);
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.GetProperty(pClient->ToServerModule(pRequest->strModuleName), pRequest->strPropertyName, gbValue);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetProperty(pClient->ToServerModule(pRequest->strModuleName), pRequest->strPropertyName, gbValue);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GET_GENERAL_PROPERTY, nRetVal, pRequest->nSize, pData);
@@ -1356,7 +1385,7 @@ XnStatus XnSensorServer::HandleGetGeneralProperty(XnClient* pClient)
 XnStatus XnSensorServer::HandleConfigFromINIFile(XnClient* pClient)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
-	
+
 	// read it
 	XnSensorServerMessageIniFile message;
 	XnUInt32 nDataSize = sizeof(message);
@@ -1370,7 +1399,7 @@ XnStatus XnSensorServer::HandleConfigFromINIFile(XnClient* pClient)
 
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.LoadConfigFromFile(message.strFileName, message.strSectionName);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.LoadConfigFromFile(message.strFileName, message.strSectionName);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GENERAL_OP_RESPOND, nRetVal);
@@ -1382,7 +1411,7 @@ XnStatus XnSensorServer::HandleConfigFromINIFile(XnClient* pClient)
 XnStatus XnSensorServer::HandleBatchConfig(XnClient* pClient)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
-	
+
 	// read it
 	XN_PROPERTY_SET_CREATE_ON_STACK(props);
 
@@ -1403,7 +1432,7 @@ XnStatus XnSensorServer::HandleBatchConfig(XnClient* pClient)
 	if (nRetVal == XN_STATUS_OK)
 	{
 		XN_SENSOR_SERVER_LOCK_BLOCK;
-		nRetVal = m_sensor.BatchConfig(&serverProps);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.BatchConfig(&serverProps);
 	}
 
 	nRetVal = SendReply(pClient, XN_SENSOR_SERVER_MESSAGE_GENERAL_OP_RESPOND, nRetVal);
@@ -1424,6 +1453,9 @@ XnStatus XnSensorServer::HandleNewStream(XnClient* pClient)
 	nRetVal = pClient->pPrivateIncomingPacker->ReadNewStream(strType, strName, &props);
 	XN_IS_STATUS_OK(nRetVal);
 
+	XnChar strServerName[XN_DEVICE_MAX_STRING_LENGTH];
+	strcpy (strServerName, pClient->strConnectionString);
+	strcat (strServerName, strType);
 	xnLogVerbose(XN_MASK_SENSOR_SERVER, "Client %u requested to create stream '%s' (%s)", pClient->nID, strName, strType);
 
 	XnPropertySet* pInitialValues = &props;
@@ -1437,23 +1469,23 @@ XnStatus XnSensorServer::HandleNewStream(XnClient* pClient)
 
 	XN_SENSOR_SERVER_LOCK_BLOCK;
 
-	if (XN_STATUS_OK == m_pServerStreams->Get(strType, pServerStream))
+	if (XN_STATUS_OK == m_sensors[pClient->strConnectionString]->m_pServerStreams->Get(strServerName, pServerStream))
 	{
 		xnLogVerbose(XN_MASK_SENSOR_SERVER, "Stream %s already exists.", strType);
 		// configure it
 		if (pInitialValues != NULL)
 		{
-			nRetVal = m_sensor.BatchConfig(pInitialValues);
+			nRetVal = m_sensors[pClient->strConnectionString]->sensor.BatchConfig(pInitialValues);
 		}
 	}
 	else
 	{
 		// create the stream
-		nRetVal = m_sensor.CreateStream(strType, strType, pInitialValues);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.CreateStream(strType, strServerName, pInitialValues);
 
 		if (nRetVal == XN_STATUS_OK)
 		{
-			nRetVal = m_pServerStreams->Get(strType, pServerStream);
+			nRetVal = m_sensors[pClient->strConnectionString]->m_pServerStreams->Get(strServerName, pServerStream);
 		}
 	}
 
@@ -1466,13 +1498,13 @@ XnStatus XnSensorServer::HandleNewStream(XnClient* pClient)
 		if (nRetVal == XN_STATUS_OK)
 		{
 			// take properties
-			nRetVal = m_sensor.GetAllProperties(&streamProps, FALSE, strType);
+			nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetAllProperties(&streamProps, FALSE, strServerName);
 		}
 
 		if (nRetVal == XN_STATUS_OK)
 		{
 			// copy relevant ones
-			nRetVal = XnPropertySetCloneModule(&streamProps, &clientStreamProps, strType, strName);
+			nRetVal = XnPropertySetCloneModule(&streamProps, &clientStreamProps, strServerName, strName);
 		}
 
 		if (nRetVal == XN_STATUS_OK)
@@ -1500,9 +1532,9 @@ XnStatus XnSensorServer::HandleNewStream(XnClient* pClient)
 	// add ref to it
 	if (nRetVal == XN_STATUS_OK)
 	{
-		xnLogVerbose(XN_MASK_SENSOR_SERVER, "Client %u adding ref to stream '%s'", pClient->nID, strType);
+		xnLogVerbose(XN_MASK_SENSOR_SERVER, "Client %u adding ref to stream '%s'", pClient->nID, strName);
 		++pServerStream->nRefCount;
-		xnLogVerbose(XN_MASK_SENSOR_SERVER, "Stream %s now has %u clients.", strType, pServerStream->nRefCount);
+		xnLogVerbose(XN_MASK_SENSOR_SERVER, "Stream %s now has %u clients.", strName, pServerStream->nRefCount);
 	}
 
 	// now add it to client data
@@ -1511,13 +1543,13 @@ XnStatus XnSensorServer::HandleNewStream(XnClient* pClient)
 	{
 		// add names mapping
 		XnDeviceString str;
-		strcpy(str.str, strType);
+		strcpy(str.str, strServerName);
 		pClient->clientToServerNames.Set(strName, str);
 		strcpy(str.str, strName);
-		pClient->serverToClientNames.Set(strType, str);
+		pClient->serverToClientNames.Set(strServerName, str);
 
 		// create client stream data
-		nRetVal = m_sensor.CreateStreamData(strType, &pStreamData);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.CreateStreamData(strServerName, &pStreamData);
 	}
 
 	if (nRetVal == XN_STATUS_OK)
@@ -1571,7 +1603,7 @@ XnStatus XnSensorServer::HandleReadStream(XnClient* pClient)
 
 	if (nRetVal == XN_STATUS_OK)
 	{
-		nRetVal = m_pServerStreams->Get(strServerName, pServerStream);
+		nRetVal = m_sensors[pClient->strConnectionString]->m_pServerStreams->Get(strServerName, pServerStream);
 	}
 
 	XnSharedMemoryBufferPool* pBufferPool = NULL;
@@ -1579,7 +1611,7 @@ XnStatus XnSensorServer::HandleReadStream(XnClient* pClient)
 	if (nRetVal == XN_STATUS_OK)
 	{
 		pDecRef = pStreamData->pInternal->pLockedBuffer;
-		nRetVal = m_sensor.GetSharedBufferPool(strServerName, &pBufferPool);
+		nRetVal = m_sensors[pClient->strConnectionString]->sensor.GetSharedBufferPool(strServerName, &pBufferPool);
 	}
 
 	if (nRetVal == XN_STATUS_OK)
@@ -1642,7 +1674,7 @@ XnStatus XnSensorServer::HandleSetStreamState(XnClient* pClient, XnBool bRequest
 
 		if (nRetVal == XN_STATUS_OK)
 		{
-			nRetVal = m_pServerStreams->Get(strServerName, pServerStream);
+			nRetVal = m_sensors[pClient->strConnectionString]->m_pServerStreams->Get(strServerName, pServerStream);
 		}
 
 		if (nRetVal == XN_STATUS_OK)
@@ -1665,7 +1697,7 @@ XnStatus XnSensorServer::HandleSetStreamState(XnClient* pClient, XnBool bRequest
 					if (pServerStream->nOpenRefCount == 1) // first one to open
 					{
 						// open it
-						nRetVal = m_sensor.OpenStream(strServerName);
+						nRetVal = m_sensors[pClient->strConnectionString]->sensor.OpenStream(strServerName);
 					}
 
 					if (nRetVal != XN_STATUS_OK)
@@ -1689,7 +1721,7 @@ XnStatus XnSensorServer::HandleSetStreamState(XnClient* pClient, XnBool bRequest
 
 				if (pServerStream->nOpenRefCount == 0)
 				{
-					m_sensor.CloseStream(strServerName);
+					m_sensors[pClient->strConnectionString]->sensor.CloseStream(strServerName);
 				}
 			}
 			else
@@ -1884,14 +1916,14 @@ XN_THREAD_PROC XnSensorServer::ReaderThread(XN_THREAD_PARAM pThreadParam)
 
 void XnSensorServer::StreamCollectionChangedCallback(XnDeviceHandle DeviceHandle, const XnChar* StreamName, XnStreamsChangeEventType EventType, void* pCookie)
 {
-	XnSensorServer* pThis = (XnSensorServer*)pCookie;
-	pThis->OnStreamCollectionChanged(StreamName, EventType);
+	SensorContext* sensorContext = (SensorContext*)pCookie;
+	sensorContext->server->OnStreamCollectionChanged(sensorContext, StreamName, EventType);
 }
 
 XnStatus XN_CALLBACK_TYPE XnSensorServer::PropertyChangedCallback(const XnProperty* pProp, void* pCookie)
 {
-	XnSensorServer* pThis = (XnSensorServer*)pCookie;
-	return pThis->OnPropertyChanged(pProp);
+	SensorContext* sensorContext = (SensorContext*)pCookie;
+	return sensorContext->server->OnPropertyChanged(sensorContext, pProp);
 }
 
 void XN_CALLBACK_TYPE XnSensorServer::NewServerEventCallback(const XnUChar* pData, XnUInt32 nDataSize, void* pCookie)
@@ -1902,8 +1934,8 @@ void XN_CALLBACK_TYPE XnSensorServer::NewServerEventCallback(const XnUChar* pDat
 
 void XN_CALLBACK_TYPE XnSensorServer::NewStreamDataCallback(XnDeviceHandle DeviceHandle, const XnChar* StreamName, void* pCookie)
 {
-	XnSensorServer* pThis = (XnSensorServer*)pCookie;
-	pThis->OnNewStreamData(StreamName);
+	SensorContext* sensorContext = (SensorContext*)pCookie;
+	sensorContext->server->OnNewStreamData(sensorContext, StreamName);
 }
 
 XnStatus XN_CALLBACK_TYPE XnSensorServer::StartNewLogCallback(XnIntProperty* pSender, XnUInt64 nValue, void* pCookie)
