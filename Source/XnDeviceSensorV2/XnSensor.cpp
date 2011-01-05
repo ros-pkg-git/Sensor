@@ -149,8 +149,7 @@ XnStatus XnSensor::Enumerate(XnConnectionString* aConnectionStrings, XnUInt32* p
 
 	xnOSMemSet(&DevicePrivateData, 0, sizeof(DevicePrivateData));
 
-	XnUSBConnectionString* connectionStrings;
-	nRetVal = XnSensorIO::EnumerateSensors(&connectionStrings, nNumSensors);
+	nRetVal = XnSensorIO::GetNumOfSensors(&nNumSensors);
 	XN_IS_STATUS_OK(nRetVal);
 
 	XnUInt32 nArraySize = *pnCount;
@@ -161,9 +160,12 @@ XnStatus XnSensor::Enumerate(XnConnectionString* aConnectionStrings, XnUInt32* p
 		return (XN_STATUS_OUTPUT_BUFFER_OVERFLOW);
 	}
 
-	for( unsigned deviceIdx = 0; deviceIdx < nNumSensors; ++deviceIdx )
+	// for now, the driver only supports telling if we have a sensor or not (and not how many),
+	// so result is always 0 or 1.
+	if (nNumSensors != 0)
 	{
-		strcpy( aConnectionStrings[deviceIdx], connectionStrings[deviceIdx] );
+		XN_ASSERT(nNumSensors == 1);
+		strcpy(aConnectionStrings[0], "*:0");
 	}
 
 	return (XN_STATUS_OK);

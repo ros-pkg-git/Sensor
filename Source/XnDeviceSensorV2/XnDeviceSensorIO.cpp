@@ -31,8 +31,6 @@
 #include "XnDeviceSensorIO.h"
 #include "XnDeviceSensor.h"
 
-#include <vector>
-#include <utility>
 //---------------------------------------------------------------------------
 // Defines
 //---------------------------------------------------------------------------
@@ -86,8 +84,35 @@ XnStatus XnSensorIO::OpenDevice(const XnChar* strPath)
 	if (nRetVal != XN_STATUS_OK && nRetVal != XN_STATUS_USB_ALREADY_INIT)
 		return nRetVal;
 
-	nRetVal = xnUSBOpenDeviceByPath( strPath, &m_pSensorHandle->USBDevice);
+	xnLogVerbose(XN_MASK_DEVICE_IO, "Connecting to USB device...");
 
+	if (strstr(strPath, "\\\\?\\usb") == NULL)
+	{
+		strPath = NULL;
+	}
+
+	// try to open a MSK device
+	xnLogVerbose(XN_MASK_DEVICE_IO, "Trying to open a MSK sensor...");
+	nRetVal = xnUSBOpenDevice(XN_SENSOR_MSK_VENDOR_ID, XN_SENSOR_MSK_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
+	if (nRetVal == XN_STATUS_USB_DEVICE_NOT_FOUND)
+	{
+		// if not found, see if we have a 6.0 PS device
+		xnLogVerbose(XN_MASK_DEVICE_IO, "Trying to open a 6.0 sensor...");
+		nRetVal = xnUSBOpenDevice(XN_SENSOR_VENDOR_ID, XN_SENSOR_6_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
+	}
+	if (nRetVal == XN_STATUS_USB_DEVICE_NOT_FOUND)
+	{
+		// if not found, see if we have a 5.0 PS device
+		xnLogVerbose(XN_MASK_DEVICE_IO, "Can't find 6.0. Trying to open a 5.0 sensor...");
+		nRetVal = xnUSBOpenDevice(XN_SENSOR_VENDOR_ID, XN_SENSOR_5_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
+	}
+	if (nRetVal == XN_STATUS_USB_DEVICE_NOT_FOUND)
+	{
+		// if not found, see if we have a 2.0 - 4.0 PS device
+		xnLogVerbose(XN_MASK_DEVICE_IO, "Can't find 5.0. Trying to open an older sensor...");
+		nRetVal = xnUSBOpenDevice(XN_SENSOR_VENDOR_ID, XN_SENSOR_2_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
+	}
+	
 	XN_IS_STATUS_OK(nRetVal);
 
 	nRetVal = xnUSBGetDeviceSpeed(m_pSensorHandle->USBDevice, &DevSpeed);
@@ -351,46 +376,46 @@ XnStatus XnSensorIO::CloseDevice()
 	return (XN_STATUS_OK);
 }
 
-XnStatus XnSensorIO::EnumerateSensors(XnUSBConnectionString** devicePaths, XnUInt32& numSensors )
+XnStatus XnSensorIO::GetNumOfSensors(XnUInt32* pnNumSensors)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
-	numSensors = 0;
+	XnBool bIsPresent = FALSE;
+
+	 *pnNumSensors = 0;
 
 	nRetVal = xnUSBInit();
 	if (nRetVal != XN_STATUS_OK && nRetVal != XN_STATUS_USB_ALREADY_INIT)
 		return nRetVal;
 
-	std::vector< std::pair< const XnUSBConnectionString*, XnUInt32 > > device_list (4);
- 
-  nRetVal = xnUSBEnumerateDevices( XN_SENSOR_MSK_VENDOR_ID, XN_SENSOR_MSK_PRODUCT_ID, &device_list[0].first, &device_list[0].second);
-  XN_IS_STATUS_OK(nRetVal);
-	numSensors += device_list[0].second;
-	
-  nRetVal = xnUSBEnumerateDevices( XN_SENSOR_VENDOR_ID, XN_SENSOR_6_0_PRODUCT_ID, &device_list[1].first, &device_list[1].second);
-  XN_IS_STATUS_OK(nRetVal);
-  numSensors += device_list[1].second;
-  
-  nRetVal = xnUSBEnumerateDevices( XN_SENSOR_VENDOR_ID, XN_SENSOR_5_0_PRODUCT_ID, &device_list[2].first, &device_list[2].second);
-  XN_IS_STATUS_OK(nRetVal);
-  numSensors += device_list[2].second;
-  
-  nRetVal = xnUSBEnumerateDevices( XN_SENSOR_VENDOR_ID, XN_SENSOR_2_0_PRODUCT_ID, &device_list[3].first, &device_list[3].second);
-  XN_IS_STATUS_OK(nRetVal);
-  numSensors += device_list[3].second;
-  
-  
-  XnUSBConnectionString* aResult = (XnUSBConnectionString*)xnOSCalloc(numSensors, sizeof(XnUSBConnectionString));
-  unsigned index = 0;
-  for (std::vector< std::pair< const XnUSBConnectionString*, XnUInt32 > >::iterator devIt = device_list.begin(); devIt != device_list.end(); ++devIt)
-  {
-  	for ( unsigned devIdx = 0; devIdx < devIt->second; ++devIdx)
-  	{
-  		strcpy( aResult[index++], devIt->first[devIdx] );
-  	}
-  	xnUSBFreeDevicesList( devIt->first );
-  }
+	// search for a MSK device
+	nRetVal = xnUSBIsDevicePresent(XN_SENSOR_MSK_VENDOR_ID, XN_SENSOR_MSK_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
+	XN_IS_STATUS_OK(nRetVal);
 
-	*devicePaths = aResult;
+	if (!bIsPresent)
+	{
+		// search for a v6.0 device
+		nRetVal = xnUSBIsDevicePresent(XN_SENSOR_VENDOR_ID, XN_SENSOR_6_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
+		XN_IS_STATUS_OK(nRetVal);
+	}
+
+	if (!bIsPresent)
+	{
+		// search for a v5.0 device
+		nRetVal = xnUSBIsDevicePresent(XN_SENSOR_VENDOR_ID, XN_SENSOR_5_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
+		XN_IS_STATUS_OK(nRetVal);
+	}
+
+	if (!bIsPresent)
+	{
+		// try searching for an older device
+		nRetVal = xnUSBIsDevicePresent(XN_SENSOR_VENDOR_ID, XN_SENSOR_2_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
+		XN_IS_STATUS_OK(nRetVal);
+	}
+
+	if (bIsPresent == TRUE)
+	{
+		*pnNumSensors = 1;
+	}
 
 	// All is good...
 	return (XN_STATUS_OK);
