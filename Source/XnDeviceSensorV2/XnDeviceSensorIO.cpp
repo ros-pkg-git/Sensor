@@ -41,23 +41,9 @@
 #define XN_SENSOR_5_0_PRODUCT_ID	0x0500
 #define XN_SENSOR_6_0_PRODUCT_ID	0x0600
 
-//<<<<<<< HEAD
-#if 0
 #define XN_SENSOR_MSK_VENDOR_ID     0x045E
 #define XN_SENSOR_MSK_PRODUCT_ID    0x02AE
 
-#if XN_PLATFORM == XN_PLATFORM_WIN32
-	#include <initguid.h>
-	DEFINE_GUID(GUID_CLASS_PSDRV_USB, 0xc3b5f022, 0x5a42, 0x1980, 0x19, 0x09, 0xea, 0x72, 0x09, 0x56, 0x01, 0xb1);
-	#define USB_DEVICE_EXTRA_PARAM (void*)&GUID_CLASS_PSDRV_USB
-#else
-	#define USB_DEVICE_EXTRA_PARAM NULL
-#endif
-
-//=======
-#else
-//>>>>>>> ps/unstable
-#endif
 //---------------------------------------------------------------------------
 // Enums
 //---------------------------------------------------------------------------
@@ -108,37 +94,9 @@ XnStatus XnSensorIO::OpenDevice(const XnChar* strPath)
 		strPath = aConnections[0];
 	}
 
-//<<<<<<< HEAD
-#if 0
-	// try to open a MSK device
-	xnLogVerbose(XN_MASK_DEVICE_IO, "Trying to open a MSK sensor...");
-	nRetVal = xnUSBOpenDevice(XN_SENSOR_MSK_VENDOR_ID, XN_SENSOR_MSK_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
-	if (nRetVal == XN_STATUS_USB_DEVICE_NOT_FOUND)
-	{
-		// if not found, see if we have a 6.0 PS device
-		xnLogVerbose(XN_MASK_DEVICE_IO, "Trying to open a 6.0 sensor...");
-		nRetVal = xnUSBOpenDevice(XN_SENSOR_VENDOR_ID, XN_SENSOR_6_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
-	}
-	if (nRetVal == XN_STATUS_USB_DEVICE_NOT_FOUND)
-	{
-		// if not found, see if we have a 5.0 PS device
-		xnLogVerbose(XN_MASK_DEVICE_IO, "Can't find 6.0. Trying to open a 5.0 sensor...");
-		nRetVal = xnUSBOpenDevice(XN_SENSOR_VENDOR_ID, XN_SENSOR_5_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
-	}
-	if (nRetVal == XN_STATUS_USB_DEVICE_NOT_FOUND)
-	{
-		// if not found, see if we have a 2.0 - 4.0 PS device
-		xnLogVerbose(XN_MASK_DEVICE_IO, "Can't find 5.0. Trying to open an older sensor...");
-		nRetVal = xnUSBOpenDevice(XN_SENSOR_VENDOR_ID, XN_SENSOR_2_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, (void*)strPath, &m_pSensorHandle->USBDevice);
-	}
-	
-//=======
-#else
 	// try to open a 6.0 device
 	xnLogVerbose(XN_MASK_DEVICE_IO, "Trying to open sensor '%s'...", strPath);
 	nRetVal = xnUSBOpenDeviceByPath(strPath, &m_pSensorHandle->USBDevice);
-//>>>>>>> ps/unstable
-#endif
 	XN_IS_STATUS_OK(nRetVal);
 
 	nRetVal = xnUSBGetDeviceSpeed(m_pSensorHandle->USBDevice, &DevSpeed);
@@ -404,14 +362,14 @@ XnStatus XnSensorIO::CloseDevice()
 	return (XN_STATUS_OK);
 }
 
-XnStatus Enumerate(XnUInt16 nProduct, XnStringsHash& devicesSet)
+XnStatus Enumerate(XnUInt16 nVendor, XnUInt16 nProduct, XnStringsHash& devicesSet)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 	
 	const XnUSBConnectionString* astrDevicePaths;
 	XnUInt32 nCount;
 
-	nRetVal = xnUSBEnumerateDevices(XN_SENSOR_VENDOR_ID, nProduct, &astrDevicePaths, &nCount);
+	nRetVal = xnUSBEnumerateDevices(nVendor, nProduct, &astrDevicePaths, &nCount);
 	XN_IS_STATUS_OK(nRetVal);
 
 	for (XnUInt32 i = 0; i < nCount; ++i)
@@ -434,41 +392,22 @@ XnStatus XnSensorIO::EnumerateSensors(XnConnectionString* aConnectionStrings, Xn
 	if (nRetVal != XN_STATUS_OK && nRetVal != XN_STATUS_USB_ALREADY_INIT)
 		return nRetVal;
 
-//<<<<<<< HEAD
-#if 0
-	// search for a MSK device
-	nRetVal = xnUSBIsDevicePresent(XN_SENSOR_MSK_VENDOR_ID, XN_SENSOR_MSK_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
-	XN_IS_STATUS_OK(nRetVal);
-
-	if (!bIsPresent)
-	{
-		// search for a v6.0 device
-		nRetVal = xnUSBIsDevicePresent(XN_SENSOR_VENDOR_ID, XN_SENSOR_6_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
-		XN_IS_STATUS_OK(nRetVal);
-	}
-
-	if (!bIsPresent)
-	{
-		// search for a v5.0 device
-		nRetVal = xnUSBIsDevicePresent(XN_SENSOR_VENDOR_ID, XN_SENSOR_5_0_PRODUCT_ID, USB_DEVICE_EXTRA_PARAM, &bIsPresent);
-		XN_IS_STATUS_OK(nRetVal);
-	}
-//=======
-#else
 	XnStringsHash devicesSet;
 
+	// search for a MSK device
+	nRetVal = Enumerate(XN_SENSOR_MSK_VENDOR_ID, XN_SENSOR_MSK_PRODUCT_ID, devicesSet);
+	XN_IS_STATUS_OK(nRetVal);
+
 	// search for a v6.0 device
-	nRetVal = Enumerate(XN_SENSOR_6_0_PRODUCT_ID, devicesSet);
+	nRetVal = Enumerate(XN_SENSOR_VENDOR_ID, XN_SENSOR_6_0_PRODUCT_ID, devicesSet);
 	XN_IS_STATUS_OK(nRetVal);
 
 	// search for a v5.0 device
-	nRetVal = Enumerate(XN_SENSOR_5_0_PRODUCT_ID, devicesSet);
+	nRetVal = Enumerate(XN_SENSOR_VENDOR_ID, XN_SENSOR_5_0_PRODUCT_ID, devicesSet);
 	XN_IS_STATUS_OK(nRetVal);
-//>>>>>>> ps/unstable
-#endif
 
 	// try searching for an older device
-	nRetVal = Enumerate(XN_SENSOR_2_0_PRODUCT_ID, devicesSet);
+	nRetVal = Enumerate(XN_SENSOR_VENDOR_ID, XN_SENSOR_2_0_PRODUCT_ID, devicesSet);
 	XN_IS_STATUS_OK(nRetVal);
 
 	// now copy back
