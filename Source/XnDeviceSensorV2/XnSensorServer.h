@@ -34,9 +34,7 @@
 #include "XnSensor.h"
 #include <XnDDK/XnDataPacker.h>
 #include "XnSensorClientServer.h"
-#include <map>
-#include <string>
-#include <vector>
+
 //---------------------------------------------------------------------------
 // Defines
 //---------------------------------------------------------------------------
@@ -58,13 +56,12 @@ public:
 
 private:
 	struct XnClient; // Forward Declaration
-	struct SensorContext; // Suat: Forward declaration of Context information for each sensor
-	
+
 	XnStatus InitServer(const XnChar* strConfigFile);
 	XnStatus ServerMainLoop();
 	void ShutdownServer();
 	XnStatus OpenSensor(const XnChar* strConnectionString);
-	XnStatus SendInitialState(XnSensor& sensor, XnClient* pClient);
+	XnStatus SendInitialState(XnClient* pClient);
 	XnStatus ServeClient(XnClient* pClient);
 	XnStatus SendReply(XnClient* pClient, XnSensorServerCustomMessages Type, XnStatus nRC, XnUInt32 nDataSize = 0, void* pAdditionalData = NULL);
 	XnStatus HandleSingleRequest(XnClient* pClient);
@@ -90,14 +87,14 @@ private:
 	XnStatus ReadStreams();
 	XnStatus ReturnToDefaults();
 
-	XnStatus OnStreamAdded(SensorContext*, const XnChar* StreamName);
-	XnStatus OnStreamRemoved(SensorContext*, const XnChar* StreamName);
-	XnStatus OnStreamCollectionChanged(SensorContext*, const XnChar* StreamName, XnStreamsChangeEventType EventType);
-	XnStatus OnPropertyChanged(SensorContext*, const XnProperty* pProp);
+	XnStatus OnStreamAdded(const XnChar* StreamName);
+	XnStatus OnStreamRemoved(const XnChar* StreamName);
+	XnStatus OnStreamCollectionChanged(const XnChar* StreamName, XnStreamsChangeEventType EventType);
+	XnStatus OnPropertyChanged(const XnProperty* pProp);
 	XnStatus OnNewServerEvent(const XnUChar* pData, XnUInt32 nDataSize, XnClient* pClient);
-	XnStatus OnNewStreamData(SensorContext*, const XnChar* StreamName);
+	XnStatus OnNewStreamData(const XnChar* StreamName);
 
-	XnStatus RegisterToProps(SensorContext*, XnPropertySet* pProps);
+	XnStatus RegisterToProps(XnPropertySet* pProps);
 
 	void DumpMessage(const XnChar* strType, XnUInt32 nSize = 0, XnUInt32 nClientID = 0, const XnChar* strComment = "");
 
@@ -126,16 +123,14 @@ private:
 	XN_CRITICAL_SECTION_HANDLE m_hClientsCriticalSection;
 
 	XnClientsList m_clients;
-		
+	XnBool m_bSensorOpen;
+	XnSensor m_sensor;
+	XnPropertySetData m_allStreamsProps;
+	XnServerStreamsHash* m_pServerStreams;
 	XnUInt32 m_nLastClientID;
 	XnDump m_serverDump;
 	XnStatus m_nErrorState;
 
-	std::map< std::string, SensorContext* > m_sensors;
-	std::map< std::string, std::string > m_client2server;
-	
-	XnChar* m_global_config_file;
-	
 	XnActualIntProperty m_noClientTimeout;
 	XnIntProperty m_startNewLog;
 };
