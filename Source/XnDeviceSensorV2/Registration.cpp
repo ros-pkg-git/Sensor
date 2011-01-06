@@ -567,7 +567,7 @@ void XnRegistration::Apply1080(XnDepthPixel* pInput, XnDepthPixel* pOutput)
 						{
 							pOutput[nArrPos-1] = nValue;
 						}
-						
+
 						pOutput[nArrPos] = nValue;
 					}
 				}
