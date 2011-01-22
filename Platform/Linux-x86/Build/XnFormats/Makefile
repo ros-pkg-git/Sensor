@@ -1,10 +1,15 @@
 SRC_FILES = \
-			../../../../Source/XnFormats/*.cpp \
-			../../../../Source/External/LibJPEG/*.c
+			../../../../Source/XnFormats/*.cpp
 
 LIB_NAME = XnFormats
 USED_LIBS = XnCore OpenNI
 DEFINES = XN_FORMATS_EXPORTS
-INC_DIRS = ../../../../Source/External/LibJPEG
+
+ifneq ($(wildcard /usr/include/jpeglib.h /usr/local/include/jpeglib.h),)
+  USED_LIBS += jpeg
+else
+  INC_DIRS  += ../../../../Source/External/LibJPEG
+  SRC_FILES += ../../../../Source/External/LibJPEG/*.c
+endif
 
 include ../EngineLibMakefile
