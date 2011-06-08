@@ -157,11 +157,19 @@ XnStatus XnSensorImageStream::Init()
 			{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_YUV422, XN_RESOLUTION_QVGA, 30 },
 			{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_YUV422, XN_RESOLUTION_QVGA, 60 },
 			{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_YUV422, XN_RESOLUTION_VGA, 30 },
+			// --avin mod--			
+			{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_BAYER,  XN_RESOLUTION_SXGA, 15 },
+			// suat
+			{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_BAYER,  XN_RESOLUTION_VGA, 30 },
+			{ XN_IO_IMAGE_FORMAT_BAYER,  XN_RESOLUTION_VGA, 30 },
+			{ XN_IO_IMAGE_FORMAT_BAYER,  XN_RESOLUTION_QVGA, 60 },
+			{ XN_IO_IMAGE_FORMAT_BAYER,  XN_RESOLUTION_QVGA, 30 },
 		};
 		nRetVal = AddSupportedModes(aSupportedModes, sizeof(aSupportedModes)/sizeof(aSupportedModes[0]));
 		XN_IS_STATUS_OK(nRetVal);
 
-		if (m_Helper.GetFirmwareVersion() >= XN_SENSOR_FW_VER_5_2)
+		// Suat: changed to 5_1 since out 5_1_6 works good with 25Hz
+		if (m_Helper.GetFirmwareVersion() >= XN_SENSOR_FW_VER_5_1)
 		{
 			XnCmosPreset aSupportedModes25[] = 
 			{
@@ -169,6 +177,8 @@ XnStatus XnSensorImageStream::Init()
 				{ XN_IO_IMAGE_FORMAT_YUV422, XN_RESOLUTION_VGA, 25 },
 				{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_YUV422, XN_RESOLUTION_QVGA, 25 },
 				{ XN_IO_IMAGE_FORMAT_UNCOMPRESSED_YUV422, XN_RESOLUTION_VGA, 25 },
+				{ XN_IO_IMAGE_FORMAT_BAYER,  XN_RESOLUTION_VGA, 25 },
+				{ XN_IO_IMAGE_FORMAT_BAYER,  XN_RESOLUTION_QVGA, 25 },
 			};
 			nRetVal = AddSupportedModes(aSupportedModes25, sizeof(aSupportedModes25)/sizeof(aSupportedModes25[0]));
 			XN_IS_STATUS_OK(nRetVal);
@@ -180,7 +190,7 @@ XnStatus XnSensorImageStream::Init()
 			nRetVal = AddSupportedModes(&highRes, 1);
 			XN_IS_STATUS_OK(nRetVal);
 		}
-		else if (m_Helper.GetFirmwareVersion() >= XN_SENSOR_FW_VER_5_2)
+		else if (m_Helper.GetFirmwareVersion() >= XN_SENSOR_FW_VER_5_1)
 		{
 			XnCmosPreset highRes = { XN_IO_IMAGE_FORMAT_BAYER, XN_RESOLUTION_UXGA, 30 };
 			nRetVal = AddSupportedModes(&highRes, 1);
@@ -268,13 +278,13 @@ XnStatus XnSensorImageStream::ValidateMode()
 	XnResolutions nResolution = GetResolution();
 
 	// check resolution
-	if ((nResolution == XN_RESOLUTION_UXGA || nResolution == XN_RESOLUTION_SXGA) && nInputFormat != XN_IO_IMAGE_FORMAT_BAYER)
-	{
-		XN_LOG_WARNING_RETURN(XN_STATUS_DEVICE_BAD_PARAM, XN_MASK_DEVICE_SENSOR, "UXGA resolution is only supported with BAYER input!");
-	}
+	//if ((nResolution == XN_RESOLUTION_UXGA || nResolution == XN_RESOLUTION_SXGA) && nInputFormat != XN_IO_IMAGE_FORMAT_BAYER)
+	//{
+	//	XN_LOG_WARNING_RETURN(XN_STATUS_DEVICE_BAD_PARAM, XN_MASK_DEVICE_SENSOR, "UXGA resolution is only supported with BAYER input!");
+	//}
 
 	// check output format
-	if (nOutputFormat == XN_OUTPUT_FORMAT_GRAYSCALE8 && nInputFormat != XN_IO_IMAGE_FORMAT_BAYER)
+	if (nOutputFormat == XN_OUTPUT_FORMAT_GRAYSCALE8 && nInputFormat != XN_IO_IMAGE_FORMAT_BAYER && nInputFormat != XN_IO_IMAGE_FORMAT_UNCOMPRESSED_BAYER )
 	{
 		XN_LOG_WARNING_RETURN(XN_STATUS_DEVICE_BAD_PARAM, XN_MASK_DEVICE_SENSOR, "Grayscale8 output requires BAYER input!");
 	}
@@ -284,11 +294,11 @@ XnStatus XnSensorImageStream::ValidateMode()
 	}
 
 	// check input format
-	if (nInputFormat == XN_IO_IMAGE_FORMAT_BAYER && nResolution != XN_RESOLUTION_UXGA && nResolution != XN_RESOLUTION_SXGA)
+	/*if (nInputFormat == XN_IO_IMAGE_FORMAT_BAYER && nResolution != XN_RESOLUTION_UXGA && nResolution != XN_RESOLUTION_SXGA)
 	{
 		XN_LOG_WARNING_RETURN(XN_STATUS_DEVICE_BAD_PARAM, XN_MASK_DEVICE_SENSOR, "BAYER input requires SXGA/UXGA resolution!");
 	}
-	else if (nInputFormat == XN_IO_IMAGE_FORMAT_JPEG && nOutputFormat != XN_OUTPUT_FORMAT_RGB24 && nOutputFormat != XN_OUTPUT_FORMAT_JPEG)
+	else */if (nInputFormat == XN_IO_IMAGE_FORMAT_JPEG && nOutputFormat != XN_OUTPUT_FORMAT_RGB24 && nOutputFormat != XN_OUTPUT_FORMAT_JPEG)
 	{
 		XN_LOG_WARNING_RETURN(XN_STATUS_DEVICE_BAD_PARAM, XN_MASK_DEVICE_SENSOR, "Jpeg input is only supported for RGB24 or JPEG output!");
 	}
