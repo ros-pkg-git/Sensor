@@ -2,10 +2,22 @@
 
 SCRIPT_DIR=`pwd`/`dirname $0`
 
-INSTALL_LIB=/usr/lib
-INSTALL_BIN=/usr/bin
-INSTALL_ETC=/usr/etc/primesense
-INSTALL_RULES=/etc/udev/rules.d
+if [ -z "$INSTALL_LIB" ]; then
+  INSTALL_LIB=/usr/lib
+fi
+if [ -z "$INSTALL_BIN" ]; then
+  INSTALL_BIN=/usr/bin
+fi
+if [ -z "$INSTALL_ETC" ]; then
+  INSTALL_BIN=/usr/etc/primesense
+fi
+if [ -z "$INSTALL_VARLOG" ]; then
+  INSTALL_VARLOG=/var/log/primesense
+fi
+if [ -z "$INSTALL_RULES" ]; then
+  INSTALL_RULES=/etc/udev/rules.d
+fi
+
 
 if [ "`uname -s`" == "Darwin" ]; then
     MODULES="libXnDeviceSensorV2.dylib libXnDeviceFile.dylib"
@@ -17,6 +29,7 @@ RULES_FILE="55-primesense-usb.rules"
 
 # read arguments
 INSTALL="1"
+REGISTER="1"
 
 while (( "$#" )); do
 	case "$1" in
@@ -26,11 +39,15 @@ while (( "$#" )); do
 	"-u")
 		INSTALL="0"
 		;;
+	"-n")
+		REGISTER="0"
+		;;
 	*)
 		echo "Usage: $0 [options]"
 		echo "Available options:"
 		printf "\t-i\tInstall (default)\n"
 		printf "\t-u\tUninstall\n"
+		printf "\t-n\tDo not (un)register the modules\n"
 		exit 1
 		;;		
 	esac
@@ -50,55 +67,65 @@ if [ "$INSTALL" == "1" ]; then
 
     # Copy shared libraries
     printf "copying shared libraries..."
+    mkdir -p $INSTALL_LIB
     cp $LIB_FILES $INSTALL_LIB
     printf "OK\n"
 
     # Copy executables
     printf "copying executables..."
+    mkdir -p $INSTALL_BIN
     cp $BIN_FILES $INSTALL_BIN
     printf "OK\n"
 
-    # register modules
-    for module in $MODULES; do
-        printf "registering module '$module' with OpenNI..."
-	niReg -r $INSTALL_LIB/$module $INSTALL_ETC
-        printf "OK\n"
-    done
+    if [ "$REGISTER" == "1" ]; then
+        # register modules
+        for module in $MODULES; do
+            printf "registering module '$module' with OpenNI..."
+	    niReg -r $INSTALL_LIB/$module $INSTALL_ETC
+            printf "OK\n"
+        done
+    fi
 
     # copy config file
     printf "copying server config file..."
+    mkdir -p $INSTALL_ETC
     cp Config/GlobalDefaults.ini $INSTALL_ETC
     printf "OK\n"
 
     # make server run as root
     printf "setting uid of server..."
-    chown root $INSTALL_BIN/XnSensorServer
-    chmod +s $INSTALL_BIN/XnSensorServer
+    if [ "$REGISTER" == 1 ]; then
+        chown root $INSTALL_BIN/XnSensorServer
+        chmod +s $INSTALL_BIN/XnSensorServer
+    fi
     printf "OK\n"
 
     # create server log dir
     printf "creating server logs dir..."
-    mkdir -p /var/log/primesense/XnSensorServer
+    mkdir -p $INSTALL_VARLOG/XnSensorServer
     # make this dir readable and writable by all (we allow anyone to delete logs)
-    chmod a+w /var/log/primesense/XnSensorServer
+    chmod a+w $INSTALL_VARLOG/XnSensorServer
     printf "OK\n"
 
     if [ "`uname -s`" != "Darwin" ]; then
         # install USB rules (so that PrimeSense sensors will be mounted with write permissions)
         printf "installing usb rules..."
+        mkdir -p $INSTALL_RULES
         cp Install/$RULES_FILE $INSTALL_RULES
         printf "OK\n"
     fi
 
 else #uninstall
 
-    # unregister modules
-    for module in $MODULES; do
-    	printf "unregistering module '$module' from OpenNI..."
-        if niReg -u $INSTALL_LIB/$module; then
-            printf "OK\n"
-        fi
-    done
+    if [ "$REGISTER" == "1" ]; then
+        # unregister modules
+        for module in $MODULES; do
+            printf "unregistering module '$module' from OpenNI..."
+            if niReg -u $INSTALL_LIB/$module; then
+                printf "OK\n"
+            fi
+        done
+    fi
 
     # delete shared libraries
     printf "removing shared libraries..."
